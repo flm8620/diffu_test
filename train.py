@@ -245,7 +245,7 @@ def main():
                         help='DataLoader worker count')
     parser.add_argument('--img_size', type=int, default=64)
     parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--epochs', type=int, default=200)
     parser.add_argument('--lr', type=float, default=2e-4)
     parser.add_argument('--base_ch', type=int, default=128)
     parser.add_argument('--time_emb_dim', type=int, default=256)
