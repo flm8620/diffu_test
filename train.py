@@ -96,10 +96,17 @@ class GaussianDiffusion(nn.Module):
 
     @torch.no_grad()
     def sample(self, cond, steps=None):
+        # sample with full or subsampled timesteps
         steps = steps or self.timesteps
         b, c, h, w = cond.size()
         x = torch.randn_like(cond)
-        for i in reversed(range(steps)):
+        # build timestep schedule
+        if steps != self.timesteps:
+            ts = np.linspace(0, self.timesteps - 1, steps, dtype=int).tolist()
+        else:
+            ts = list(range(self.timesteps))
+        # reverse loop
+        for i in reversed(ts):
             t = torch.full((b, ), i, device=self.device, dtype=torch.long)
             pred_noise = self.model(x, t, cond)
             beta = self.betas[t].view(-1, 1, 1, 1)
