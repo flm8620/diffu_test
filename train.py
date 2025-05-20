@@ -1,7 +1,6 @@
 import os
 import random
 import math
-import argparse
 from datetime import datetime
 
 import cv2
@@ -14,6 +13,9 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms, utils
 from tqdm import tqdm
+
+import hydra
+from omegaconf import DictConfig
 
 
 # -------------------- Data Generation --------------------
@@ -195,16 +197,20 @@ class UNet(nn.Module):
 
 
 # -------------------- Training & Utils --------------------
-def train(model, diffusion, loader, optim, device, args, start_epoch=1):
-    os.makedirs(args.save_dir, exist_ok=True)
-    img_dir = os.path.join(args.save_dir, 'images')
+def train(model,
+          diffusion,
+          loader,
+          optim,
+          device,
+          cfg: DictConfig,
+          start_epoch=1):
+    img_dir = 'images'
     os.makedirs(img_dir, exist_ok=True)
-    writer = SummaryWriter(
-        log_dir=os.path.join(args.save_dir, 'runs',
-                             datetime.now().strftime('%Y%m%d-%H%M%S')))
+    writer = SummaryWriter(log_dir='.')
     model.train()
-    for epoch in range(start_epoch, args.epochs + 1):
+    for epoch in range(start_epoch, cfg.train.epochs + 1):
         total = 0
+        print('Training...')
         for x, y in tqdm(loader, desc=f'Epoch {epoch}'):
             x, y = x.to(device), y.to(device)
             loss = diffusion(y, x)
@@ -215,56 +221,43 @@ def train(model, diffusion, loader, optim, device, args, start_epoch=1):
         avg = total / len(loader)
         print(f'Epoch {epoch} loss {avg:.4f}')
         writer.add_scalar('Loss', avg, epoch)
-        # sample and log images (fast for logs)
-        x_s, y_s = next(iter(loader))
-        x_s, y_s = x_s.to(device), y_s.to(device)
-        p_s = diffusion.sample(x_s)
-        vis_x = (x_s + 1) / 2
-        vis_y = (y_s + 1) / 2
-        vis_p = (p_s.clamp(-1, 1) + 1) / 2
-        writer.add_image('Input', utils.make_grid(vis_x, nrow=4), epoch)
-        writer.add_image('GT', utils.make_grid(vis_y, nrow=4), epoch)
-        writer.add_image('Pred', utils.make_grid(vis_p, nrow=4), epoch)
-        # save images
-        to_pil = transforms.ToPILImage()
-        to_pil(utils.make_grid(vis_x.cpu(), nrow=4)).save(
-            os.path.join(img_dir, f'epoch{epoch}_in.png'))
-        to_pil(utils.make_grid(vis_y.cpu(), nrow=4)).save(
-            os.path.join(img_dir, f'epoch{epoch}_gt.png'))
-        to_pil(utils.make_grid(vis_p.cpu(), nrow=4)).save(
-            os.path.join(img_dir, f'epoch{epoch}_pred.png'))
+        if epoch % cfg.train.viz_per_epoch == 0:
+            x_s, y_s = next(iter(loader))
+            x_s, y_s = x_s.to(device), y_s.to(device)
+            print('Sampling...')
+            p_s = diffusion.sample(x_s)
+            vis_x = (x_s + 1) / 2
+            vis_y = (y_s + 1) / 2
+            vis_p = (p_s.clamp(-1, 1) + 1) / 2
+            print('Logging...')
+            writer.add_image('Input', utils.make_grid(vis_x, nrow=4), epoch)
+            writer.add_image('GT', utils.make_grid(vis_y, nrow=4), epoch)
+            writer.add_image('Pred', utils.make_grid(vis_p, nrow=4), epoch)
+            # save images
+            print('Saving images...')
+            to_pil = transforms.ToPILImage()
+            to_pil(utils.make_grid(vis_x.cpu(), nrow=4)).save(
+                os.path.join(img_dir, f'epoch{epoch}_in.png'))
+            to_pil(utils.make_grid(vis_y.cpu(), nrow=4)).save(
+                os.path.join(img_dir, f'epoch{epoch}_gt.png'))
+            to_pil(utils.make_grid(vis_p.cpu(), nrow=4)).save(
+                os.path.join(img_dir, f'epoch{epoch}_pred.png'))
         # save checkpoint
+        print('Saving checkpoint...')
         ckpt = {
             'epoch': epoch,
             'model': model.state_dict(),
             'optimizer': optim.state_dict()
         }
-        torch.save(ckpt, os.path.join(args.save_dir, 'checkpoint.pth'))
+        torch.save(ckpt, 'checkpoint.pth')
     writer.close()
 
 
 # -------------------- Main --------------------
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--num_workers',
-                        type=int,
-                        default=4,
-                        help='DataLoader worker count')
-    parser.add_argument('--img_size', type=int, default=64)
-    parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--epochs', type=int, default=200)
-    parser.add_argument('--lr', type=float, default=2e-4)
-    parser.add_argument('--base_ch', type=int, default=128)
-    parser.add_argument('--time_emb_dim', type=int, default=256)
-    parser.add_argument('--timesteps',
-                        type=int,
-                        default=1000,
-                        help='Full diffusion steps')
-    parser.add_argument('--save_dir', type=str, default='./models')
-    parser.add_argument('--resume',
-                        action='store_true',
-                        help='Resume from last checkpoint')
-    args = parser.parse_args()
+@hydra.main(config_path="configs", config_name="config")
+def main(cfg: DictConfig):
+    torch.manual_seed(cfg.general.seed)
+    device = torch.device(cfg.general.device)
 
     assert torch.cuda.is_available(), 'CUDA required'
     device = torch.device('cuda')
@@ -273,27 +266,27 @@ def main():
     transform = transforms.Compose(
         [transforms.ToTensor(),
          transforms.Normalize([0.5] * 3, [0.5] * 3)])
-    dataset = NextDigitDataset(length=20000,
-                               img_size=args.img_size,
+    dataset = NextDigitDataset(length=cfg.train.dataset_length,
+                               img_size=cfg.train.img_size,
                                transform=transform)
     loader = DataLoader(dataset,
-                        batch_size=args.batch_size,
+                        batch_size=cfg.train.batch_size,
                         shuffle=True,
-                        num_workers=args.num_workers,
+                        num_workers=cfg.train.num_workers,
                         pin_memory=True)
 
     # Model + Diffusion
     model = UNet(channels=3,
-                 base_ch=args.base_ch,
-                 time_emb_dim=args.time_emb_dim).to(device)
+                 base_ch=cfg.train.base_ch,
+                 time_emb_dim=cfg.train.time_emb_dim).to(device)
     diffusion = GaussianDiffusion(model,
-                                  timesteps=args.timesteps,
+                                  timesteps=cfg.train.timesteps,
                                   device='cuda').to(device)
-    optim = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optim = torch.optim.Adam(model.parameters(), lr=cfg.train.lr)
 
     start_epoch = 1
-    if args.resume:
-        ckpt_path = os.path.join(args.save_dir, 'checkpoint.pth')
+    if cfg.general.resume:
+        ckpt_path = os.path.join(os.getcwd(), "checkpoint.pth")
         if os.path.isfile(ckpt_path):
             ckpt = torch.load(ckpt_path)
             model.load_state_dict(ckpt['model'])
@@ -302,16 +295,7 @@ def main():
             print(f"Resuming from epoch {ckpt['epoch']}")
 
     # Train
-    train(model, diffusion, loader, optim, device, args, start_epoch)
-
-    # Final inference
-    x, _ = dataset[0]
-    x = x.unsqueeze(0).to(device)
-    p = diffusion.sample(x)
-    img = ((p.clamp(-1, 1) + 1) / 2 * 255).cpu().squeeze().permute(
-        1, 2, 0).numpy().astype(np.uint8)
-    Image.fromarray(img).save('sample_next.png')
-    print(f"Sample saved to sample_next.png")
+    train(model, diffusion, loader, optim, device, cfg, start_epoch)
 
 
 if __name__ == '__main__':

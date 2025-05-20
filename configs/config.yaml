@@ -1,0 +1,26 @@
+
+general:
+  device: "cuda"
+  seed: 10
+  debug: 1
+  resume: true
+  run_name: 'test_run'
+
+train:
+  batch_size: 32
+  epochs: 2000
+  img_size: 64
+  lr: 1e-4
+  base_ch: 128
+  time_emb_dim: 256
+  timesteps: 1000
+  num_workers: 4
+  dataset_length: 20000
+  viz_per_epoch: 5
+
+hydra:
+  run:
+    # This becomes the working directory for each run
+    dir: ./models/${general.run_name}
+  job:
+    chdir: True
